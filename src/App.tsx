@@ -2,7 +2,7 @@ import DeckGL from "@deck.gl/react";
 import { GeoJsonLayer } from "@deck.gl/layers";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { useEffect, useMemo, useState } from "react";
-import Map from "react-map-gl/maplibre";
+import MapLibreMap from "react-map-gl/maplibre";
 
 type StatusClass =
   | "no-data"
@@ -268,7 +268,7 @@ export default function App() {
       <section className="workspace">
         <div className="mapPane">
           <DeckGL initialViewState={INITIAL_VIEW_STATE} controller layers={layers}>
-            <Map mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" reuseMaps />
+            <MapLibreMap mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" reuseMaps />
           </DeckGL>
           <div className="legend">
             {(Object.keys(STATUS_COLORS) as StatusClass[]).map((status) => (
