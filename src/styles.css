@@ -31,7 +31,9 @@ select {
 .dashboard {
   display: grid;
   gap: 14px;
-  min-height: 100vh;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100vh;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -115,12 +117,14 @@ input[type="range"] {
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) 360px;
-  min-height: 620px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .mapPane {
   border: 1px solid #d9ded7;
-  min-height: 620px;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -159,7 +163,8 @@ input[type="range"] {
 
 .sidePanel {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   overflow: auto;
 }
 
@@ -271,12 +276,16 @@ input[type="range"] {
 .lowerBand {
   display: grid;
   grid-template-columns: 420px minmax(0, 1fr);
+  max-height: 360px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .trendPanel,
 .alertsPanel {
   border: 0;
   min-width: 0;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -371,10 +380,33 @@ th {
 }
 
 @media (max-width: 1100px) {
+  .dashboard {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .controlBand,
   .workspace,
   .lowerBand {
     grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    overflow: visible;
+  }
+
+  .mapPane {
+    height: 620px;
+  }
+
+  .sidePanel {
+    max-height: 620px;
+  }
+
+  .lowerBand {
+    max-height: none;
+    overflow: visible;
   }
 
   .trendPanel {
@@ -396,6 +428,10 @@ th {
 
   .mapPane,
   .workspace {
-    min-height: 520px;
+    min-height: 0;
+  }
+
+  .mapPane {
+    height: 520px;
   }
 }
