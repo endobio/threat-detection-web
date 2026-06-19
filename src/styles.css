@@ -104,16 +104,31 @@ button { cursor: pointer; }
 .infoFooter { align-items: center; border-top: 1px solid rgba(0,0,0,.06); color: #6e6e73; display: flex; flex: 0 0 auto; font-size: 11px; justify-content: space-between; padding: 12px 32px; }
 
 @media (max-width: 1180px) {
-  .infographicApp { height: auto; min-height: 100vh; overflow: visible; }
+  html, body, #root { height: auto; min-height: 100%; }
+  .infographicApp { height: auto; min-height: 100dvh; overflow: visible; }
+  .infoMain { flex: 0 0 auto; min-height: 0; }
   .infoContent, .mapAndDetail, .bottomAnalytics, .statStrip { grid-template-columns: 1fr; }
-  .mapCard { height: 620px; }
+  .infoContent, .mapAndDetail { min-height: auto; }
+  .mapCard { height: 620px; min-height: 620px; }
   .countyPanel { min-height: 360px; }
+  .bottomAnalytics { flex: 0 0 auto; grid-auto-rows: auto; min-height: 0; }
+  .chartCard { min-height: 220px; overflow: visible; }
+  .historyBars { max-height: none; }
   .infoFooter, .infoHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
 
 @media (max-width: 720px) {
   .infoHeader, .infoMain, .infoFooter { padding-left: 12px; padding-right: 12px; }
+  .infoMain { gap: 12px; padding-bottom: 18px; padding-top: 14px; }
   .brandBlock { align-items: flex-start; flex-wrap: wrap; }
   .headerDivider, .brandBlock strong { display: none; }
-  .mapCard { height: 520px; }
+  .statStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .statCard { padding: 13px 14px; }
+  .statCard strong { font-size: 24px; }
+  .mapCard { height: 500px; min-height: 500px; }
+  .mapHeader { gap: 10px; padding: 14px 14px 0; }
+  .severityLegend { bottom: 12px; left: 12px; }
+  .chartCard { min-height: 240px; padding: 16px; }
+  .chartHeader { gap: 10px; }
+  .historyBarRow { grid-template-columns: 62px minmax(0, 1fr) 66px; }
 }
