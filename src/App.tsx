@@ -53,6 +53,20 @@ type TrendRow = {
   statesPositive: number;
 };
 
+type HistoryBin = {
+  label: string;
+  from: string;
+  to: string;
+  positiveReports: number;
+  negativeReports: number;
+  totalReports: number;
+  reviewedReports: number;
+  reportingCounties: number;
+  positiveCounties: number;
+  statesPositive: number;
+  isRecentWindow: boolean;
+};
+
 type CountyTrendRow = {
   week: string;
   positiveReports: number;
@@ -99,6 +113,8 @@ type DiseaseSummary = {
   };
   countyMetrics: CountyMetric[];
   trend: TrendRow[];
+  historicAnnual: HistoryBin[];
+  historicPeriods: HistoryBin[];
   alerts: AlertRow[];
 };
 
@@ -178,6 +194,7 @@ export default function App() {
   const [summary, setSummary] = useState<DemoSummary | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<number | null>(null);
   const [threshold, setThreshold] = useState(0);
+  const [historyMode, setHistoryMode] = useState<"annual" | "period">("annual");
   const [hoveredFips, setHoveredFips] = useState<string | null>(null);
   const [selectedFips, setSelectedFips] = useState<string | null>(null);
 
@@ -271,6 +288,8 @@ export default function App() {
     1,
     ...(activeMetric?.historicTrend ?? []).flatMap((row) => [row.positiveReports, row.negativeReports])
   );
+  const historyBins = historyMode === "annual" ? selectedDisease?.historicAnnual ?? [] : selectedDisease?.historicPeriods ?? [];
+  const maxHistory = Math.max(1, ...historyBins.flatMap((row) => [row.positiveReports, row.negativeReports]));
 
   if (!summary || !selectedDisease) {
     return <main className="loading">Loading disease summary...</main>;
@@ -420,9 +439,47 @@ export default function App() {
       </section>
 
       <section className="lowerBand">
+        <div className="historyPanel">
+          <div className="sectionHead">
+            <div>
+              <h2>Historical baseline</h2>
+              <span>
+                {historyMode === "annual" ? "Binned by year" : "Binned by 60-day period"}; highlighted bars overlap the last{" "}
+                {selectedDisease.recentWindow.days} days
+              </span>
+            </div>
+            <div className="modeToggle" role="group" aria-label="History binning">
+              <button className={historyMode === "annual" ? "active" : ""} onClick={() => setHistoryMode("annual")}>
+                Year
+              </button>
+              <button className={historyMode === "period" ? "active" : ""} onClick={() => setHistoryMode("period")}>
+                60 days
+              </button>
+            </div>
+          </div>
+          <div className="historyBars">
+            {historyBins.map((row) => (
+              <div className={`historyBarRow ${row.isRecentWindow ? "recentBin" : ""}`} key={`${historyMode}-${row.label}`}>
+                <span title={`${row.from} to ${row.to}`}>{historyMode === "annual" ? row.label : row.from.slice(5)}</span>
+                <div>
+                  <i className="positiveBar" style={{ width: `${(row.positiveReports / maxHistory) * 100}%` }} />
+                  <i className="negativeBar" style={{ width: `${(row.negativeReports / maxHistory) * 100}%` }} />
+                </div>
+                <strong>
+                  {row.positiveReports} / {row.negativeReports}
+                </strong>
+              </div>
+            ))}
+          </div>
+          <p className="interpretation compactInterpretation">
+            Recent window: {selectedDisease.recentWindow.positiveReports.toLocaleString()} positive reports across{" "}
+            {selectedDisease.recentWindow.positiveCounties.toLocaleString()} counties since {selectedDisease.recentWindow.from}.
+          </p>
+        </div>
+
         <div className="trendPanel">
           <div className="sectionHead">
-            <h2>Weekly trend</h2>
+            <h2>Recent weekly trend</h2>
             <span>Recent {selectedDisease.recentWindow.days} days</span>
           </div>
           <div className="bars">
