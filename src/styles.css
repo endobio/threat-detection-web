@@ -250,6 +250,24 @@ input[type="range"] {
   gap: 6px;
 }
 
+.countyTrend {
+  margin-top: 16px;
+}
+
+.sectionHead.compact {
+  margin-bottom: 8px;
+}
+
+.sectionHead.compact h2 {
+  font-size: 15px;
+}
+
+.compactBars {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .lowerBand {
   display: grid;
   grid-template-columns: 420px minmax(0, 1fr);
@@ -342,6 +360,14 @@ th {
   color: #52615b;
   position: sticky;
   top: 0;
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover {
+  background: #f4f6f1;
 }
 
 @media (max-width: 1100px) {

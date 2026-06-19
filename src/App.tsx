@@ -41,6 +41,7 @@ type CountyMetric = {
     verification: number;
     negativeEvidence: number;
   };
+  historicTrend: CountyTrendRow[];
 };
 
 type TrendRow = {
@@ -50,6 +51,16 @@ type TrendRow = {
   newPositiveCounties: number;
   positiveCounties: number;
   statesPositive: number;
+};
+
+type CountyTrendRow = {
+  week: string;
+  positiveReports: number;
+  negativeReports: number;
+  totalReports: number;
+  reviewedReports: number;
+  emergenceScore: number;
+  statusClass: StatusClass;
 };
 
 type AlertRow = {
@@ -77,6 +88,15 @@ type DiseaseSummary = {
   states_positive: number;
   first_observed: string | null;
   latest_observed: string | null;
+  recentWindow: {
+    days: number;
+    from: string;
+    to: string;
+    positiveReports: number;
+    negativeReports: number;
+    reportingCounties: number;
+    positiveCounties: number;
+  };
   countyMetrics: CountyMetric[];
   trend: TrendRow[];
   alerts: AlertRow[];
@@ -84,6 +104,11 @@ type DiseaseSummary = {
 
 type DemoSummary = {
   generatedAt: string;
+  recentWindow: {
+    days: number;
+    from: string;
+    to: string;
+  };
   counties: FeatureCollection<Geometry, CountyProperties>;
   diseases: DiseaseSummary[];
 };
@@ -144,7 +169,8 @@ function emptyMetric(feature: CountyFeature): CountyMetric {
       positiveSignal: 0,
       verification: 0,
       negativeEvidence: 0
-    }
+    },
+    historicTrend: []
   };
 }
 
@@ -152,7 +178,8 @@ export default function App() {
   const [summary, setSummary] = useState<DemoSummary | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<number | null>(null);
   const [threshold, setThreshold] = useState(0);
-  const [activeMetric, setActiveMetric] = useState<CountyMetric | null>(null);
+  const [hoveredFips, setHoveredFips] = useState<string | null>(null);
+  const [selectedFips, setSelectedFips] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSummary() {
@@ -169,13 +196,33 @@ export default function App() {
     return summary.diseases.find((disease) => disease.subjectnumber === selectedSubject) ?? summary.diseases[0] ?? null;
   }, [selectedSubject, summary]);
 
-  const metricsByFips = useMemo(() => {
+  const allMetricsByFips = useMemo(() => {
     const metrics = new Map<string, CountyMetric>();
     selectedDisease?.countyMetrics.forEach((metric) => {
-      if (metric.emergenceScore >= threshold) metrics.set(metric.fipscode, metric);
+      metrics.set(metric.fipscode, metric);
     });
     return metrics;
-  }, [selectedDisease, threshold]);
+  }, [selectedDisease]);
+
+  const colorMetricsByFips = useMemo(() => {
+    const metrics = new Map<string, CountyMetric>();
+    allMetricsByFips.forEach((metric, fips) => {
+      if (metric.emergenceScore >= threshold) metrics.set(fips, metric);
+    });
+    return metrics;
+  }, [allMetricsByFips, threshold]);
+
+  const featuresByFips = useMemo(() => {
+    const features = new Map<string, CountyFeature>();
+    summary?.counties.features.forEach((feature) => features.set(getGeoid(feature), feature));
+    return features;
+  }, [summary]);
+
+  const activeFips = hoveredFips ?? selectedFips;
+  const activeMetric = useMemo(() => {
+    if (!activeFips) return null;
+    return allMetricsByFips.get(activeFips) ?? (featuresByFips.get(activeFips) ? emptyMetric(featuresByFips.get(activeFips)!) : null);
+  }, [activeFips, allMetricsByFips, featuresByFips]);
 
   const layers = useMemo(() => {
     if (!summary) return [];
@@ -189,7 +236,7 @@ export default function App() {
         lineWidthMinPixels: 0.4,
         getLineColor: [255, 255, 255, 120],
         getFillColor: (feature) => {
-          const metric = metricsByFips.get(getGeoid(feature));
+          const metric = colorMetricsByFips.get(getGeoid(feature));
           if (!metric) return STATUS_COLORS["no-data"];
           const color = STATUS_COLORS[metric.statusClass];
           if (metric.statusClass === "recent-positive" || metric.statusClass === "new-positive-county") {
@@ -199,25 +246,23 @@ export default function App() {
           return color;
         },
         onHover: ({ object }) => {
-          if (!object) {
-            setActiveMetric(null);
-            return;
-          }
-          const feature = object as CountyFeature;
-          setActiveMetric(metricsByFips.get(getGeoid(feature)) ?? emptyMetric(feature));
+          setHoveredFips(object ? getGeoid(object as CountyFeature) : null);
         },
         onClick: ({ object }) => {
           if (!object) return;
-          const feature = object as CountyFeature;
-          setActiveMetric(metricsByFips.get(getGeoid(feature)) ?? emptyMetric(feature));
+          setSelectedFips(getGeoid(object as CountyFeature));
         }
       })
     ];
-  }, [metricsByFips, summary]);
+  }, [colorMetricsByFips, summary]);
 
   const maxTrend = Math.max(
     1,
     ...(selectedDisease?.trend ?? []).flatMap((row) => [row.positiveReports, row.negativeReports])
+  );
+  const maxCountyTrend = Math.max(
+    1,
+    ...(activeMetric?.historicTrend ?? []).flatMap((row) => [row.positiveReports, row.negativeReports])
   );
 
   if (!summary || !selectedDisease) {
@@ -233,7 +278,7 @@ export default function App() {
         </div>
         <div className="summaryStats">
           <span>{summary.diseases.length} demo diseases</span>
-          <span>{selectedDisease.countyMetrics.length} reporting counties</span>
+          <span>{selectedDisease.recentWindow.positiveCounties} positive counties</span>
           <span>{selectedDisease.alerts.length} alerts</span>
         </div>
       </header>
@@ -261,7 +306,7 @@ export default function App() {
           />
         </label>
         <div className="demoNote">
-          Summary generated {summary.generatedAt.slice(0, 10)}. The demo uses pre-aggregated all-time disease-county metrics.
+          Showing emerging signals from {summary.recentWindow.from} to {summary.recentWindow.to}. County charts retain historical weekly context.
         </div>
       </section>
 
@@ -288,14 +333,16 @@ export default function App() {
             <div className="metricGrid">
               <span>Subject</span>
               <strong>{selectedDisease.subjectnumber}</strong>
-              <span>Total positives</span>
-              <strong>{formatNumber(selectedDisease.total_positive)}</strong>
-              <span>Total negatives</span>
-              <strong>{formatNumber(selectedDisease.total_negative)}</strong>
-              <span>Positive counties</span>
-              <strong>{formatNumber(selectedDisease.counties_positive)}</strong>
-              <span>Latest observed</span>
-              <strong>{selectedDisease.latest_observed ?? "n/a"}</strong>
+              <span>Recent positives</span>
+              <strong>{formatNumber(selectedDisease.recentWindow.positiveReports)}</strong>
+              <span>Recent negatives</span>
+              <strong>{formatNumber(selectedDisease.recentWindow.negativeReports)}</strong>
+              <span>Recent positive counties</span>
+              <strong>{formatNumber(selectedDisease.recentWindow.positiveCounties)}</strong>
+              <span>Window</span>
+              <strong>
+                {selectedDisease.recentWindow.from} to {selectedDisease.recentWindow.to}
+              </strong>
             </div>
           </section>
 
@@ -333,6 +380,30 @@ export default function App() {
                   <span>Review {formatNumber(activeMetric.scoreComponents.verification, 2)}</span>
                   <span>Negative evidence {formatNumber(activeMetric.scoreComponents.negativeEvidence, 2)}</span>
                 </div>
+                <div className="countyTrend">
+                  <div className="sectionHead compact">
+                    <h2>County historic trend</h2>
+                    <span>{activeMetric.historicTrend.length || 0} active weeks</span>
+                  </div>
+                  {activeMetric.historicTrend.length ? (
+                    <div className="bars compactBars">
+                      {activeMetric.historicTrend.map((row) => (
+                        <div className="barRow" key={row.week}>
+                          <span>{row.week.slice(5)}</span>
+                          <div>
+                            <i className="positiveBar" style={{ width: `${(row.positiveReports / maxCountyTrend) * 100}%` }} />
+                            <i className="negativeBar" style={{ width: `${(row.negativeReports / maxCountyTrend) * 100}%` }} />
+                          </div>
+                          <strong>
+                            {row.positiveReports} / {row.negativeReports}
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No historical reports for this disease in the selected county.</p>
+                  )}
+                </div>
               </>
             ) : (
               <p className="muted">Hover or click a county.</p>
@@ -345,7 +416,7 @@ export default function App() {
         <div className="trendPanel">
           <div className="sectionHead">
             <h2>Weekly trend</h2>
-            <span>Last {selectedDisease.trend.length} active weeks</span>
+            <span>Recent {selectedDisease.recentWindow.days} days</span>
           </div>
           <div className="bars">
             {selectedDisease.trend.map((row) => (
@@ -383,7 +454,7 @@ export default function App() {
               </thead>
               <tbody>
                 {selectedDisease.alerts.map((alert) => (
-                  <tr key={alert.fipscode}>
+                  <tr key={alert.fipscode} className="clickableRow" onClick={() => setSelectedFips(alert.fipscode)}>
                     <td>{alert.level}</td>
                     <td>
                       {alert.county}, {alert.state}
