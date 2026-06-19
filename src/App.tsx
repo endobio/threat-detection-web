@@ -3,6 +3,18 @@ import { GeoJsonLayer } from "@deck.gl/layers";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { useEffect, useMemo, useState } from "react";
 import MapLibreMap from "react-map-gl/maplibre";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip as RechartTooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 
 type StatusClass =
   | "no-data"
@@ -129,6 +141,12 @@ type DemoSummary = {
   diseases: DiseaseSummary[];
 };
 
+type MapTooltip = {
+  x: number;
+  y: number;
+  metric: CountyMetric;
+} | null;
+
 const INITIAL_VIEW_STATE = {
   longitude: -98.6,
   latitude: 39.7,
@@ -148,6 +166,8 @@ const STATUS_COLORS: Record<StatusClass, [number, number, number, number]> = {
   "unreviewed-positive": [126, 77, 153, 200]
 };
 
+const DISEASE_COLORS = ["#EF4444", "#F97316", "#8B5CF6", "#EAB308", "#10B981", "#0071E3"];
+
 function getGeoid(feature: CountyFeature) {
   return feature.properties?.GEOID ?? String(feature.id ?? "").padStart(5, "0");
 }
@@ -162,6 +182,29 @@ function formatNumber(value: number | null | undefined, digits = 0) {
 
 function rgba(color: [number, number, number, number]) {
   return `rgba(${color[0]},${color[1]},${color[2]},${color[3] / 255})`;
+}
+
+function rgb(color: [number, number, number, number]) {
+  return `rgb(${color[0]},${color[1]},${color[2]})`;
+}
+
+function riskLevel(score: number) {
+  if (score >= 0.7) return "Critical";
+  if (score >= 0.45) return "High";
+  if (score >= 0.2) return "Moderate";
+  return "Low";
+}
+
+function displayDiseaseName(disease: DiseaseSummary) {
+  return (disease.displayname ?? disease.scientificname ?? `Subject ${disease.subjectnumber}`).replace(/\s*\([^)]*\)\s*$/, "");
+}
+
+function fourWeekGrowth(rows: TrendRow[]) {
+  if (rows.length < 8) return 0;
+  const recent = rows.slice(-4).reduce((sum, row) => sum + row.positiveCounties, 0);
+  const prior = rows.slice(-8, -4).reduce((sum, row) => sum + row.positiveCounties, 0);
+  if (!prior) return recent > 0 ? 100 : 0;
+  return Math.round(((recent - prior) / prior) * 100);
 }
 
 function emptyMetric(feature: CountyFeature): CountyMetric {
@@ -197,6 +240,7 @@ export default function App() {
   const [historyMode, setHistoryMode] = useState<"annual" | "period">("annual");
   const [hoveredFips, setHoveredFips] = useState<string | null>(null);
   const [selectedFips, setSelectedFips] = useState<string | null>(null);
+  const [mapTooltip, setMapTooltip] = useState<MapTooltip>(null);
 
   useEffect(() => {
     async function loadSummary() {
@@ -212,10 +256,13 @@ export default function App() {
     if (!summary) return null;
     return summary.diseases.find((disease) => disease.subjectnumber === selectedSubject) ?? summary.diseases[0] ?? null;
   }, [selectedSubject, summary]);
+  const selectedDiseaseIndex = summary?.diseases.findIndex((disease) => disease.subjectnumber === selectedDisease?.subjectnumber) ?? 0;
+  const diseaseColor = DISEASE_COLORS[Math.max(0, selectedDiseaseIndex) % DISEASE_COLORS.length];
 
   useEffect(() => {
     setHoveredFips(null);
     setSelectedFips(null);
+    setMapTooltip(null);
   }, [selectedSubject]);
 
   const allMetricsByFips = useMemo(() => {
@@ -263,7 +310,7 @@ export default function App() {
         getLineColor: [255, 255, 255, 120],
         getFillColor: (feature) => {
           const metric = colorMetricsByFips.get(getGeoid(feature));
-          if (!metric) return STATUS_COLORS["no-data"];
+          if (!metric) return [232, 232, 237, 120];
           const color = STATUS_COLORS[metric.statusClass];
           if (metric.statusClass === "recent-positive" || metric.statusClass === "new-positive-county") {
             const boost = Math.min(1, metric.emergenceScore);
@@ -271,8 +318,17 @@ export default function App() {
           }
           return color;
         },
-        onHover: ({ object }) => {
-          setHoveredFips(object ? getGeoid(object as CountyFeature) : null);
+        onHover: ({ object, x, y }) => {
+          if (!object) {
+            setHoveredFips(null);
+            setMapTooltip(null);
+            return;
+          }
+          const feature = object as CountyFeature;
+          const fips = getGeoid(feature);
+          const metric = allMetricsByFips.get(fips) ?? emptyMetric(feature);
+          setHoveredFips(fips);
+          setMapTooltip({ x, y, metric });
         },
         onClick: ({ object }) => {
           if (!object) return;
@@ -283,7 +339,7 @@ export default function App() {
         }
       })
     ];
-  }, [colorMetricsByFips, historicalCountyFeatures, selectedDisease, summary, threshold]);
+  }, [allMetricsByFips, colorMetricsByFips, historicalCountyFeatures, selectedDisease, summary, threshold]);
 
   const maxTrend = Math.max(
     1,
@@ -295,252 +351,234 @@ export default function App() {
   );
   const historyBins = historyMode === "annual" ? selectedDisease?.historicAnnual ?? [] : selectedDisease?.historicPeriods ?? [];
   const maxHistory = Math.max(1, ...historyBins.flatMap((row) => [row.positiveReports, row.negativeReports]));
+  const maxEmergenceScore = Math.max(0, ...(selectedDisease?.countyMetrics ?? []).map((metric) => metric.emergenceScore));
+  const activeHotspots = (selectedDisease?.countyMetrics ?? []).filter((metric) => metric.positiveCount > 0 && metric.emergenceScore >= 0.2).length;
+  const trendGrowth = fourWeekGrowth(selectedDisease?.trend ?? []);
+  const trendChartData = (selectedDisease?.trend ?? []).map((row) => ({
+    week: row.week.slice(5),
+    hotspots: row.positiveCounties,
+    reports: row.positiveReports
+  }));
+  const selectedCountyMetric = selectedFips ? allMetricsByFips.get(selectedFips) ?? null : null;
+  const countySparkData = (selectedCountyMetric?.historicTrend ?? []).slice(-10).map((row) => ({
+    week: row.week.slice(5),
+    reports: row.positiveReports
+  }));
 
   if (!summary || !selectedDisease) {
     return <main className="loading">Loading disease summary...</main>;
   }
 
   return (
-    <main className="dashboard">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Vite demo summary</p>
-          <h1>Emerging crop disease intelligence</h1>
+    <div className="infographicApp">
+      <header className="infoHeader">
+        <div className="brandBlock">
+          <div className="brandIcon">CW</div>
+          <div>
+            <p>USDA Grant A1713</p>
+            <h1>CropWatch Disease Surveillance</h1>
+          </div>
+          <span className="headerDivider" />
+          <strong>Emerging Hotspot Intelligence · County Resolution</strong>
         </div>
-        <div className="summaryStats">
-          <span>{summary.diseases.length} demo diseases</span>
-          <span>{historicalCountyFeatures.length} counties with history</span>
-          <span>{selectedDisease.alerts.length} alerts</span>
+        <div className="windowControl">
+          <span>Surveillance window</span>
+          <button>{selectedDisease.recentWindow.days}d</button>
         </div>
       </header>
 
-      <section className="controlBand">
-        <label>
-          Disease
-          <select value={selectedDisease.subjectnumber} onChange={(event) => setSelectedSubject(Number(event.target.value))}>
-            {summary.diseases.map((disease) => (
-              <option key={disease.subjectnumber} value={disease.subjectnumber}>
-                {disease.displayname ?? disease.scientificname ?? disease.subjectnumber}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Emergence threshold {threshold.toFixed(2)}
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={threshold}
-            onChange={(event) => setThreshold(Number(event.target.value))}
-          />
-        </label>
-        <div className="demoNote">
-          Showing counties with historical records for the selected disease. Emerging signals use {summary.recentWindow.from} to{" "}
-          {summary.recentWindow.to}.
-        </div>
-      </section>
-
-      <section className="workspace">
-        <div className="mapPane">
-          <DeckGL initialViewState={INITIAL_VIEW_STATE} controller layers={layers}>
-            <MapLibreMap mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" reuseMaps />
-          </DeckGL>
-          <div className="legend">
-            {(Object.keys(STATUS_COLORS) as StatusClass[]).map((status) => (
-              <span key={status}>
-                <i style={{ background: rgba(STATUS_COLORS[status]) }} />
-                {status.replaceAll("-", " ")}
-              </span>
-            ))}
+      <main className="infoMain">
+        <section className="statStrip">
+          <div className="statCard">
+            <span>Active Hotspots</span>
+            <strong style={{ color: diseaseColor }}>{activeHotspots}</strong>
+            <p>Positive counties · latest {selectedDisease.recentWindow.days}d</p>
           </div>
-        </div>
+          <div className="statCard">
+            <span>Counties Affected</span>
+            <strong>{historicalCountyFeatures.length}</strong>
+            <p>With disease history</p>
+          </div>
+          <div className="statCard">
+            <span>Total Reports</span>
+            <strong>{formatNumber(selectedDisease.recentWindow.positiveReports + selectedDisease.recentWindow.negativeReports)}</strong>
+            <p>Positive and negative surveillance</p>
+          </div>
+          <div className="statCard">
+            <span>4-Week Trend</span>
+            <strong className={trendGrowth >= 0 ? "trendUp" : "trendDown"}>{trendGrowth >= 0 ? "+" : ""}{trendGrowth}%</strong>
+            <p>Positive county growth rate</p>
+          </div>
+        </section>
 
-        <aside className="sidePanel">
-          <section className="detailBlock">
-            <p className="panelLabel">Selected disease</p>
-            <h2>{selectedDisease.displayname}</h2>
-            <p className="muted">{selectedDisease.scientificname}</p>
-            <div className="metricGrid">
-              <span>Subject</span>
-              <strong>{selectedDisease.subjectnumber}</strong>
-              <span>Recent positives</span>
-              <strong>{formatNumber(selectedDisease.recentWindow.positiveReports)}</strong>
-              <span>Recent negatives</span>
-              <strong>{formatNumber(selectedDisease.recentWindow.negativeReports)}</strong>
-              <span>Recent positive counties</span>
-              <strong>{formatNumber(selectedDisease.recentWindow.positiveCounties)}</strong>
-              <span>Window</span>
-              <strong>
-                {selectedDisease.recentWindow.from} to {selectedDisease.recentWindow.to}
-              </strong>
+        <section className="infoContent">
+          <aside className="diseaseRail">
+            <div className="railCard">
+              <p className="railTitle">Diseases</p>
+              {summary.diseases.map((disease, index) => {
+                const selected = disease.subjectnumber === selectedDisease.subjectnumber;
+                const color = DISEASE_COLORS[index % DISEASE_COLORS.length];
+                return (
+                  <button
+                    className={`diseaseButton ${selected ? "selected" : ""}`}
+                    key={disease.subjectnumber}
+                    onClick={() => setSelectedSubject(disease.subjectnumber)}
+                  >
+                    <i style={{ background: color, boxShadow: selected ? `0 0 0 3px ${color}22` : "none" }} />
+                    <span>
+                      <strong>{displayDiseaseName(disease)}</strong>
+                      <em>{disease.scientificname ?? "Unknown pathogen"}</em>
+                    </span>
+                    {selected && <b>{riskLevel(maxEmergenceScore)}</b>}
+                  </button>
+                );
+              })}
             </div>
-          </section>
-
-          <section className="detailBlock">
-            <p className="panelLabel">County tooltip</p>
-            {activeMetric ? (
-              <>
-                <h2>
-                  {activeMetric.county} County, {activeMetric.state}
-                </h2>
-                <p className={`statusText ${activeMetric.statusClass}`}>{activeMetric.statusClass.replaceAll("-", " ")}</p>
-                <div className="metricGrid">
-                  <span>Latest observation</span>
-                  <strong>{activeMetric.latestObserved ?? "n/a"}</strong>
-                  <span>Positive reports</span>
-                  <strong>{activeMetric.positiveCount}</strong>
-                  <span>Negative reports</span>
-                  <strong>{activeMetric.negativeCount}</strong>
-                  <span>Total reports</span>
-                  <strong>{activeMetric.totalReports}</strong>
-                  <span>Reviewed</span>
-                  <strong>
-                    {activeMetric.reviewedCount} / {activeMetric.totalReports}
-                  </strong>
-                  <span>Positive rate</span>
-                  <strong>{activeMetric.positiveRate === null ? "n/a" : `${formatNumber(activeMetric.positiveRate * 100, 1)}%`}</strong>
-                  <span>Emergence score</span>
-                  <strong>{formatNumber(activeMetric.emergenceScore, 2)}</strong>
-                </div>
-                <p className="interpretation">{activeMetric.whyFlagged}</p>
-                <div className="scoreParts">
-                  <span>Recency {formatNumber(activeMetric.scoreComponents.recency, 2)}</span>
-                  <span>Novelty {formatNumber(activeMetric.scoreComponents.novelty, 2)}</span>
-                  <span>Positive {formatNumber(activeMetric.scoreComponents.positiveSignal, 2)}</span>
-                  <span>Review {formatNumber(activeMetric.scoreComponents.verification, 2)}</span>
-                  <span>Negative evidence {formatNumber(activeMetric.scoreComponents.negativeEvidence, 2)}</span>
-                </div>
-                <div className="countyTrend">
-                  <div className="sectionHead compact">
-                    <h2>County historic trend</h2>
-                    <span>{activeMetric.historicTrend.length || 0} active weeks</span>
-                  </div>
-                  {activeMetric.historicTrend.length ? (
-                    <div className="bars compactBars">
-                      {activeMetric.historicTrend.map((row) => (
-                        <div className="barRow" key={row.week}>
-                          <span>{row.week.slice(5)}</span>
-                          <div>
-                            <i className="positiveBar" style={{ width: `${(row.positiveReports / maxCountyTrend) * 100}%` }} />
-                            <i className="negativeBar" style={{ width: `${(row.negativeReports / maxCountyTrend) * 100}%` }} />
-                          </div>
-                          <strong>
-                            {row.positiveReports} / {row.negativeReports}
-                          </strong>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">No historical reports for this disease in the selected county.</p>
-                  )}
-                </div>
-              </>
-            ) : (
-              <p className="muted">Hover or click a county.</p>
-            )}
-          </section>
-        </aside>
-      </section>
-
-      <section className="lowerBand">
-        <div className="historyPanel">
-          <div className="sectionHead">
-            <div>
-              <h2>Historical baseline</h2>
+            <div className="aboutCard">
+              <p>About</p>
               <span>
-                {historyMode === "annual" ? "Binned by year" : "Binned by 60-day period"}; highlighted bars overlap the last{" "}
-                {selectedDisease.recentWindow.days} days
+                Emerging signal is based on recent positives, new county detections, reviewed reports, and negative surveillance evidence.
               </span>
+              <label>
+                Score threshold {threshold.toFixed(2)}
+                <input min="0" max="1" step="0.01" type="range" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
+              </label>
             </div>
-            <div className="modeToggle" role="group" aria-label="History binning">
-              <button className={historyMode === "annual" ? "active" : ""} onClick={() => setHistoryMode("annual")}>
-                Year
-              </button>
-              <button className={historyMode === "period" ? "active" : ""} onClick={() => setHistoryMode("period")}>
-                60 days
-              </button>
+          </aside>
+
+          <section className="mapAndDetail">
+            <div className="mapCard">
+              <div className="mapHeader">
+                <div>
+                  <h2>{displayDiseaseName(selectedDisease)} — County Hotspot Map</h2>
+                  <p>
+                    {historicalCountyFeatures.length} counties with history · {selectedDisease.recentWindow.days}-day emergence window · click any county
+                  </p>
+                </div>
+                <span className={`riskPill ${riskLevel(maxEmergenceScore).toLowerCase()}`}>{riskLevel(maxEmergenceScore)}</span>
+              </div>
+              <DeckGL initialViewState={INITIAL_VIEW_STATE} controller layers={layers}>
+                <MapLibreMap mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" reuseMaps />
+              </DeckGL>
+              <div className="severityLegend">
+                <p>Emergence class</p>
+                <div>
+                  <span><i style={{ background: rgb(STATUS_COLORS["negative-surveillance"]) }} /> Surveillance</span>
+                  <span><i style={{ background: rgb(STATUS_COLORS["recent-positive"]) }} /> Recent positive</span>
+                  <span><i style={{ background: rgb(STATUS_COLORS["new-positive-county"]) }} /> New county</span>
+                </div>
+              </div>
+              {mapTooltip && (
+                <div className="mapTooltip" style={{ left: mapTooltip.x + 14, top: mapTooltip.y + 14 }}>
+                  <strong>{mapTooltip.metric.county} County</strong>
+                  <span>{mapTooltip.metric.state}</span>
+                  <p>{mapTooltip.metric.positiveCount} positive · {mapTooltip.metric.negativeCount} negative</p>
+                </div>
+              )}
+            </div>
+
+            <aside className="countyPanel">
+              {selectedCountyMetric ? (
+                <>
+                  <div className="countyPanelHeader">
+                    <div>
+                      <p>{selectedCountyMetric.state}</p>
+                      <h3>{selectedCountyMetric.county} County</h3>
+                    </div>
+                    <button onClick={() => setSelectedFips(null)}>×</button>
+                  </div>
+                  <div className="severityBlock">
+                    <span>Emergence score</span>
+                    <strong style={{ color: diseaseColor }}>{formatNumber(selectedCountyMetric.emergenceScore, 2)}</strong>
+                    <div><i style={{ width: `${Math.min(100, selectedCountyMetric.emergenceScore * 100)}%`, background: diseaseColor }} /></div>
+                  </div>
+                  <div className="countyStats">
+                    <span><b>{selectedCountyMetric.positiveCount}</b>Positive reports</span>
+                    <span><b>{selectedCountyMetric.negativeCount}</b>Negative reports</span>
+                    <span><b>{selectedCountyMetric.reviewedCount}</b>Reviewed</span>
+                    <span><b>{selectedCountyMetric.latestObserved ?? "n/a"}</b>Latest</span>
+                  </div>
+                  <p className="countyFlag">{selectedCountyMetric.whyFlagged}</p>
+                  <div className="miniChart">
+                    <p>County positive report trend</p>
+                    <ResponsiveContainer width="100%" height={82}>
+                      <BarChart data={countySparkData} barCategoryGap="25%">
+                        <Bar dataKey="reports" radius={[3, 3, 0, 0]}>
+                          {countySparkData.map((_, index) => (
+                            <Cell key={index} fill={index === countySparkData.length - 1 ? diseaseColor : `${diseaseColor}66`} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              ) : (
+                <div className="emptyCounty">
+                  <strong>Select a county</strong>
+                  <p>Click a highlighted county to inspect recent reports and historical activity.</p>
+                </div>
+              )}
+            </aside>
+          </section>
+        </section>
+
+        <section className="bottomAnalytics">
+          <div className="chartCard wide">
+            <div className="chartHeader">
+              <div>
+                <h2>Recent Hotspot Trend — {displayDiseaseName(selectedDisease)}</h2>
+                <p>Weekly positive county count in the latest {selectedDisease.recentWindow.days} days</p>
+              </div>
+              <span style={{ background: `${diseaseColor}18`, color: diseaseColor }}>{trendGrowth >= 0 ? "+" : ""}{trendGrowth}%</span>
+            </div>
+            <ResponsiveContainer width="100%" height={130}>
+              <AreaChart data={trendChartData} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="recentTrendGradient" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="5%" stopColor={diseaseColor} stopOpacity={0.2} />
+                    <stop offset="95%" stopColor={diseaseColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(0,0,0,0.05)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="week" tick={{ fontSize: 10, fill: "#6E6E73" }} tickLine={false} axisLine={false} interval={2} />
+                <YAxis tick={{ fontSize: 10, fill: "#6E6E73" }} tickLine={false} axisLine={false} />
+                <RechartTooltip />
+                <Area type="monotone" dataKey="hotspots" stroke={diseaseColor} strokeWidth={2} fill="url(#recentTrendGradient)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="chartCard history">
+            <div className="chartHeader">
+              <div>
+                <h2>Historical Baseline</h2>
+                <p>{historyMode === "annual" ? "Binned by year" : "Binned by 60-day period"}</p>
+              </div>
+              <div className="modeToggle">
+                <button className={historyMode === "annual" ? "active" : ""} onClick={() => setHistoryMode("annual")}>Year</button>
+                <button className={historyMode === "period" ? "active" : ""} onClick={() => setHistoryMode("period")}>60d</button>
+              </div>
+            </div>
+            <div className="historyBars">
+              {historyBins.map((row) => (
+                <div className={`historyBarRow ${row.isRecentWindow ? "recentBin" : ""}`} key={`${historyMode}-${row.label}`}>
+                  <span title={`${row.from} to ${row.to}`}>{historyMode === "annual" ? row.label : row.from.slice(5)}</span>
+                  <div>
+                    <i className="positiveBar" style={{ width: `${(row.positiveReports / maxHistory) * 100}%` }} />
+                    <i className="negativeBar" style={{ width: `${(row.negativeReports / maxHistory) * 100}%` }} />
+                  </div>
+                  <strong>{row.positiveReports} / {row.negativeReports}</strong>
+                </div>
+              ))}
             </div>
           </div>
-          <div className="historyBars">
-            {historyBins.map((row) => (
-              <div className={`historyBarRow ${row.isRecentWindow ? "recentBin" : ""}`} key={`${historyMode}-${row.label}`}>
-                <span title={`${row.from} to ${row.to}`}>{historyMode === "annual" ? row.label : row.from.slice(5)}</span>
-                <div>
-                  <i className="positiveBar" style={{ width: `${(row.positiveReports / maxHistory) * 100}%` }} />
-                  <i className="negativeBar" style={{ width: `${(row.negativeReports / maxHistory) * 100}%` }} />
-                </div>
-                <strong>
-                  {row.positiveReports} / {row.negativeReports}
-                </strong>
-              </div>
-            ))}
-          </div>
-          <p className="interpretation compactInterpretation">
-            Recent window: {selectedDisease.recentWindow.positiveReports.toLocaleString()} positive reports across{" "}
-            {selectedDisease.recentWindow.positiveCounties.toLocaleString()} counties since {selectedDisease.recentWindow.from}.
-          </p>
-        </div>
+        </section>
+      </main>
 
-        <div className="trendPanel">
-          <div className="sectionHead">
-            <h2>Recent weekly trend</h2>
-            <span>Recent {selectedDisease.recentWindow.days} days</span>
-          </div>
-          <div className="bars">
-            {selectedDisease.trend.map((row) => (
-              <div className="barRow" key={row.week}>
-                <span>{row.week.slice(5)}</span>
-                <div>
-                  <i className="positiveBar" style={{ width: `${(row.positiveReports / maxTrend) * 100}%` }} />
-                  <i className="negativeBar" style={{ width: `${(row.negativeReports / maxTrend) * 100}%` }} />
-                </div>
-                <strong>
-                  {row.positiveReports} / {row.negativeReports}
-                </strong>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="alertsPanel">
-          <div className="sectionHead">
-            <h2>Emergence alerts</h2>
-            <span>Ranked by summary score</span>
-          </div>
-          <div className="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Level</th>
-                  <th>County</th>
-                  <th>Latest</th>
-                  <th>Pos</th>
-                  <th>Neg</th>
-                  <th>Score</th>
-                  <th>Why flagged</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedDisease.alerts.map((alert) => (
-                  <tr key={alert.fipscode} className="clickableRow" onClick={() => setSelectedFips(alert.fipscode)}>
-                    <td>{alert.level}</td>
-                    <td>
-                      {alert.county}, {alert.state}
-                    </td>
-                    <td>{alert.latestObserved ?? "n/a"}</td>
-                    <td>{alert.positiveCount}</td>
-                    <td>{alert.negativeCount}</td>
-                    <td>{formatNumber(alert.emergenceScore, 2)}</td>
-                    <td>{alert.whyFlagged}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-    </main>
+      <footer className="infoFooter">
+        <span>USDA NIFA Grant A1713 · Emerging Crop Disease Surveillance Program</span>
+        <span>Data: Bugwood / EDDMapS-style surveillance · Updated {summary.generatedAt.slice(0, 10)}</span>
+      </footer>
+    </div>
   );
 }
