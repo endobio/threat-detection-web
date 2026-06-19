@@ -215,6 +215,7 @@ export default function App() {
 
   useEffect(() => {
     setHoveredFips(null);
+    setSelectedFips(null);
   }, [selectedSubject]);
 
   const allMetricsByFips = useMemo(() => {
@@ -245,12 +246,16 @@ export default function App() {
     return allMetricsByFips.get(activeFips) ?? (featuresByFips.get(activeFips) ? emptyMetric(featuresByFips.get(activeFips)!) : null);
   }, [activeFips, allMetricsByFips, featuresByFips]);
 
+  const historicalCountyFeatures = useMemo(() => {
+    return summary?.counties.features.filter((feature) => allMetricsByFips.has(getGeoid(feature))) ?? [];
+  }, [allMetricsByFips, summary]);
+
   const layers = useMemo(() => {
     if (!summary || !selectedDisease) return [];
     return [
       new GeoJsonLayer<CountyFeature>({
         id: `demo-county-emergence-${selectedDisease.subjectnumber}`,
-        data: summary.counties.features,
+        data: historicalCountyFeatures,
         pickable: true,
         stroked: true,
         filled: true,
@@ -278,7 +283,7 @@ export default function App() {
         }
       })
     ];
-  }, [colorMetricsByFips, selectedDisease, summary, threshold]);
+  }, [colorMetricsByFips, historicalCountyFeatures, selectedDisease, summary, threshold]);
 
   const maxTrend = Math.max(
     1,
@@ -304,7 +309,7 @@ export default function App() {
         </div>
         <div className="summaryStats">
           <span>{summary.diseases.length} demo diseases</span>
-          <span>{selectedDisease.recentWindow.positiveCounties} positive counties</span>
+          <span>{historicalCountyFeatures.length} counties with history</span>
           <span>{selectedDisease.alerts.length} alerts</span>
         </div>
       </header>
@@ -332,7 +337,8 @@ export default function App() {
           />
         </label>
         <div className="demoNote">
-          Showing emerging signals from {summary.recentWindow.from} to {summary.recentWindow.to}. County charts retain historical weekly context.
+          Showing counties with historical records for the selected disease. Emerging signals use {summary.recentWindow.from} to{" "}
+          {summary.recentWindow.to}.
         </div>
       </section>
 
