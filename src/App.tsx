@@ -196,6 +196,10 @@ export default function App() {
     return summary.diseases.find((disease) => disease.subjectnumber === selectedSubject) ?? summary.diseases[0] ?? null;
   }, [selectedSubject, summary]);
 
+  useEffect(() => {
+    setHoveredFips(null);
+  }, [selectedSubject]);
+
   const allMetricsByFips = useMemo(() => {
     const metrics = new Map<string, CountyMetric>();
     selectedDisease?.countyMetrics.forEach((metric) => {
@@ -225,10 +229,10 @@ export default function App() {
   }, [activeFips, allMetricsByFips, featuresByFips]);
 
   const layers = useMemo(() => {
-    if (!summary) return [];
+    if (!summary || !selectedDisease) return [];
     return [
       new GeoJsonLayer<CountyFeature>({
-        id: "demo-county-emergence",
+        id: `demo-county-emergence-${selectedDisease.subjectnumber}`,
         data: summary.counties.features,
         pickable: true,
         stroked: true,
@@ -251,10 +255,13 @@ export default function App() {
         onClick: ({ object }) => {
           if (!object) return;
           setSelectedFips(getGeoid(object as CountyFeature));
+        },
+        updateTriggers: {
+          getFillColor: [selectedDisease.subjectnumber, threshold]
         }
       })
     ];
-  }, [colorMetricsByFips, summary]);
+  }, [colorMetricsByFips, selectedDisease, summary, threshold]);
 
   const maxTrend = Math.max(
     1,
