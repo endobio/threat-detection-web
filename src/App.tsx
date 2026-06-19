@@ -244,7 +244,7 @@ export default function App() {
 
   useEffect(() => {
     async function loadSummary() {
-      const response = await fetch("/data/demo_summary.json");
+      const response = await fetch(`${import.meta.env.BASE_URL}data/demo_summary.json`);
       const payload = (await response.json()) as DemoSummary;
       setSummary(payload);
       setSelectedSubject(payload.diseases[0]?.subjectnumber ?? null);
